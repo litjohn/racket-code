@@ -39,9 +39,9 @@
         (syntax-case stx ()
             [(_ . exp)
                 (let ([exp-vec (list->vector (syntax->datum #'exp))])
-                    (datum->syntax 
+                    (datum->syntax
                         #'exp
-                        (transform 
-                            exp-vec 
+                        (transform
+                            exp-vec
                             0
                             (vector-length exp-vec))))])))
