@@ -26,32 +26,42 @@
 
     [`(+ . ,rest)
      (let ([res (map simplify rest)]
+           [numbers 0]
            [l '()])
 
        (for ([i (in-list res)])
-         (when (not (eqv? 0 i))
-           (set! l (cons i l))))
+         (if (number? i)
+             (set! numbers (+ numbers i))
+             (set! l (cons i l))))
 
        (cond
-         [(null? l) 0]
-         [(null? (cdr l)) (car l)]
-         [else (cons '+ l)]))]
+         [(null? l) numbers]
+         [(and (zero? numbers) (null? (cdr l))) (car l)]
+         [else (cons '+
+                     (if (zero? numbers)
+                         l
+                         (cons numbers l)))]))]
 
     [`(* . ,rest)
      (let ([res (map simplify rest)]
+           [numbers 1]
            [l '()])
 
        (if (member 0 res)
            0
            (begin
              (for ([i (in-list res)])
-               (when (not (eqv? 1 i))
-                 (set! l (cons i l))))
+               (if (number? i)
+                   (set! numbers (* numbers i))
+                   (set! l (cons i l))))
 
              (cond
-               [(null? l) 1]
-               [(null? (cdr l)) (car l)]
-               [else (cons '* l)]))))]))
+               [(null? l) numbers]
+               [(and (= numbers 1) (null? (cdr l))) (car l)]
+               [else (cons '*
+                           (if (= 1 numbers)
+                               l
+                               (cons numbers l)))]))))]))
 
 (define (diff exp x)
   (simplify (D exp x)))
