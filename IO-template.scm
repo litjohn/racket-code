@@ -32,6 +32,9 @@
         (eof-object)
         (read-chars))))
 
+(define (read-int)
+  (string->number (read-word)))
+
 ;; 从指定端口（默认为当前输入）读取一整行
 (define (readln . maybe-port)
   (let ([in (if (null? maybe-port)
