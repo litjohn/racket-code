@@ -14,19 +14,6 @@
 
 (define get-val val-type-val)
 
-(define stack '()) ;; 栈
-(define memory (make-vector 4096 (make-val 0))) ;; 4K 长度的内存
-
-(define/contract (push x)
-  (-> val-type? void?)
-  (set! stack (cons x stack)))
-
-(define (top)
-  (car stack))
-
-(define (pop)
-  (set! stack (cdr stack)))
-
 ;; 虚拟机主体
 ;; 设计一下指令集。
 ;; `#(store ,pos) 将栈顶存储至指定位置
@@ -39,24 +26,31 @@
 ;; 如何传参？
 ;; 利用函数栈。给 call 加一个参数表示调用之后的新的栈
 ;; 那么 call 就应该是 `#(call ,line ,args)
-
-(define dump '())
-
-(define (call pc new-stack)
-  (set! dump (cons (cons stack pc) dump))
-  (set! stack new-stack))
-
-(define (return)
-  (let ([old-stack (caar dump)]
-        [old-pc (cdar dump)])
-
-    (set! stack old-stack)
-    old-pc))
-
 ;; 我们需要一些算术操作。暂时加上 add，sub，mul，div，mod。
 ;; 自然需要 `#(jmp ,line) 无条件跳转，以及对应的一些有条件跳转
 
-(define (virtual-machine ins-vec)
+(define (run ins-vec dump stack memory)
+  (define/contract (push x)
+    (-> val-type? void?)
+    (set! stack (cons x stack)))
+
+  (define (top)
+    (car stack))
+
+  (define (pop)
+    (set! stack (cdr stack)))
+
+  (define (call pc new-stack)
+    (set! dump (cons (cons stack pc) dump))
+    (set! stack new-stack))
+
+  (define (return)
+    (let ([old-stack (caar dump)]
+          [old-pc (cdar dump)])
+
+      (set! stack old-stack)
+      (add1 old-pc)))
+
   (define end (vector-length ins-vec))
 
   (let loop ([pc 0])
@@ -74,12 +68,16 @@
              (pop)
              (let ([b (top)])
                (pop)
-               (push (+ (get-val a) (get-val b)))))]
+               (push (make-val (+ (get-val a) (get-val b))))))
+
+           (loop (add1 pc))]
 
           [`#(mul)
            (let ([a (top)])
              (pop)
              (let ([b (top)])
                (pop)
-               (push (* (get-val a) (get-val b)))))]
+               (push (make-val (* (get-val a) (get-val b))))))
+
+           (loop (add1 pc))]
           [else (error "Invalid instruction!")])))))
