@@ -3,8 +3,7 @@
 (require racket/contract)
 (require racket/match)
 
-;; 让我们来构建一个抢占式多任务的操作系统
-;; 首先，我们来实现一个虚拟机。我们操作系统运行的所有任务都是用这个虚拟机的指令写的。
+;; 让我们来实现一个虚拟机。
 ;; 基于栈的虚拟机。其中含有的一切值的类型都是整数。
 
 (struct val-type (val) #:transparent)
@@ -24,6 +23,9 @@
 ;; 为了实现这些，我们需要一个 dump 来存储栈以及 PC
 ;; 我们需要一些算术操作。暂时加上 add，sub，mul，div，mod。
 ;; 自然需要 `#(jmp ,line) 无条件跳转，以及对应的一些有条件跳转
+;; 使用 `#(jcond ,line) 进行条件跳转。如果栈顶不为零则跳转到 line。
+;; 用 read 和 print 指令进行 io
+;; 用 exhaust 指令弹栈
 
 (define (run ins-vec [dump '()] [stack '()] [memory (make-vector 4096 (make-val 0))] [last-pc 0])
   (define/contract (push x)
@@ -54,10 +56,14 @@
           [`#(store ,pos) (vector-set! memory pos (top)) (loop (add1 pc))]
           [`#(load ,pos) (push (vector-ref memory pos)) (loop (add1 pc))]
           [`#(imm ,val) (push (make-val val)) (loop (add1 pc))]
-          [`#(exhause) (pop) (loop (add1 pc))]
+          [`#(exhaust) (pop) (loop (add1 pc))]
           [`#(call ,line) (call pc) (loop line)]
           [`#(ret) (loop (return))]
           [`#(jmp ,line) (loop line)]
+          [`#(jcond ,line)
+           (if (zero? (top))
+               (loop (add1 pc))
+               (loop line))]
 
           [`#(add)
            (let ([a (top)])
@@ -68,12 +74,39 @@
 
            (loop (add1 pc))]
 
+          [`#(sub)
+           (let ([a (top)])
+             (pop)
+             (let ([b (top)])
+               (pop)
+               (push (make-val (- (get-val b) (get-val a))))))
+
+           (loop (add1 pc))]
+
           [`#(mul)
            (let ([a (top)])
              (pop)
              (let ([b (top)])
                (pop)
                (push (make-val (* (get-val a) (get-val b))))))
+
+           (loop (add1 pc))]
+
+          [`#(div)
+           (let ([a (top)])
+             (pop)
+             (let ([b (top)])
+               (pop)
+               (push (make-val (quotient (get-val b) (get-val a))))))
+
+           (loop (add1 pc))]
+
+          [`#(mod)
+           (let ([a (top)])
+             (pop)
+             (let ([b (top)])
+               (pop)
+               (push (make-val (remainder (get-val b) (get-val a))))))
 
            (loop (add1 pc))]
 
