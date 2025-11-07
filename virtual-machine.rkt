@@ -25,9 +25,9 @@
 ;; 自然需要 `#(jmp ,line) 无条件跳转，以及对应的一些有条件跳转
 ;; 使用 `#(jcond ,line) 进行条件跳转。如果栈顶不为零则跳转到 line。
 ;; 用 read 和 print 指令进行 io
-;; 用 exhaust 指令弹栈
+;; 用 drop 指令弹栈
 
-(define (run ins-vec [dump '()] [stack '()] [memory (make-vector 4096 (make-val 0))] [last-pc 0])
+(define (run ins-vec [memory (make-vector 4096 (make-val 0))] [dump '()] [stack '()] [last-pc 0])
   (define/contract (push x)
     (-> val-type? void?)
     (set! stack (cons x stack)))
@@ -56,14 +56,17 @@
           [`#(store ,pos) (vector-set! memory pos (top)) (loop (add1 pc))]
           [`#(load ,pos) (push (vector-ref memory pos)) (loop (add1 pc))]
           [`#(imm ,val) (push (make-val val)) (loop (add1 pc))]
-          [`#(exhaust) (pop) (loop (add1 pc))]
+          [`#(drop) (pop) (loop (add1 pc))]
           [`#(call ,line) (call pc) (loop line)]
           [`#(ret) (loop (return))]
           [`#(jmp ,line) (loop line)]
           [`#(jcond ,line)
-           (if (zero? (top))
-               (loop (add1 pc))
-               (loop line))]
+
+           (let ([flag (top)])
+             (pop)
+             (if (zero? flag)
+                 (loop (add1 pc))
+                 (loop line)))]
 
           [`#(add)
            (let ([a (top)])
