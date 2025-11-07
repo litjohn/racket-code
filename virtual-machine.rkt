@@ -22,14 +22,10 @@
 ;; `#(call ,line) 跳转至指定行并进行函数压栈
 ;; `#(ret) 返回并弹出函数栈
 ;; 为了实现这些，我们需要一个 dump 来存储栈以及 PC
-;; 注意内存状态应予以保留，就像堆内存不会因为函数调用而被清空一样
-;; 如何传参？
-;; 利用函数栈。给 call 加一个参数表示调用之后的新的栈
-;; 那么 call 就应该是 `#(call ,line ,args)
 ;; 我们需要一些算术操作。暂时加上 add，sub，mul，div，mod。
 ;; 自然需要 `#(jmp ,line) 无条件跳转，以及对应的一些有条件跳转
 
-(define (run ins-vec dump stack memory)
+(define (run ins-vec [dump '()] [stack '()] [memory (make-vector 4096 (make-val 0))] [last-pc 0])
   (define/contract (push x)
     (-> val-type? void?)
     (set! stack (cons x stack)))
@@ -40,28 +36,28 @@
   (define (pop)
     (set! stack (cdr stack)))
 
-  (define (call pc new-stack)
-    (set! dump (cons (cons stack pc) dump))
-    (set! stack new-stack))
+  (define (call pc)
+    (set! dump (cons pc dump)))
 
   (define (return)
-    (let ([old-stack (caar dump)]
-          [old-pc (cdar dump)])
+    (let ([old-pc (car dump)])
 
-      (set! stack old-stack)
+      (set! dump (cdr dump))
       (add1 old-pc)))
 
   (define end (vector-length ins-vec))
 
-  (let loop ([pc 0])
+  (let loop ([pc last-pc])
     (when (< pc end)
       (let ([ins (vector-ref ins-vec pc)])
         (match ins
           [`#(store ,pos) (vector-set! memory pos (top)) (loop (add1 pc))]
           [`#(load ,pos) (push (vector-ref memory pos)) (loop (add1 pc))]
           [`#(imm ,val) (push (make-val val)) (loop (add1 pc))]
-          [`#(call ,line ,args) (call pc args) (loop line)]
+          [`#(exhause) (pop) (loop (add1 pc))]
+          [`#(call ,line) (call pc) (loop line)]
           [`#(ret) (loop (return))]
+          [`#(jmp ,line) (loop line)]
 
           [`#(add)
            (let ([a (top)])
@@ -80,4 +76,20 @@
                (push (make-val (* (get-val a) (get-val b))))))
 
            (loop (add1 pc))]
+
+          [`#(print) (displayln (get-val (top))) (loop (add1 pc))]
+          [`#(read) (push (make-val (read))) (loop (add1 pc))]
           [else (error "Invalid instruction!")])))))
+
+;;; test
+(define a1
+  `#(#(jmp 5)
+     #(read)
+     #(read)
+
+     #(mul)
+     #(ret)
+     #(call 1)
+     #(print)))
+
+(run a1)
