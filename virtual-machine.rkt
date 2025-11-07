@@ -7,9 +7,12 @@
 ;; 基于栈的虚拟机。其中含有的一切值的类型都是整数。
 
 (struct val-type (val) #:transparent)
-(define/contract (make-val x)
+(define/contract (contracted-make-val x)
   (-> integer? val-type?)
   (val-type x))
+
+;; 我们可以让 make-val 被定义为 val 以消除契约的开销，或者在平时将它定义为 contracted-make-val 以获得类型安全
+(define make-val contracted-make-val)
 
 (define get-val val-type-val)
 
