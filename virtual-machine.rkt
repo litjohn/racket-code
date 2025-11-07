@@ -67,7 +67,7 @@
 
            (let ([flag (top)])
              (pop)
-             (if (zero? flag)
+             (if (zero? (get-val flag))
                  (loop (add1 pc))
                  (loop line)))]
 
