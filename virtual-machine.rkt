@@ -2,6 +2,7 @@
 
 (require racket/contract)
 (require racket/match)
+(require racket/bool)
 
 ;; 让我们来实现一个虚拟机。
 ;; 基于栈的虚拟机。其中含有的一切值的类型都是整数。
@@ -29,6 +30,8 @@
 ;; 使用 `#(jcond ,line) 进行条件跳转。如果栈顶不为零则跳转到 line。
 ;; 用 read 和 print 指令进行 io
 ;; 用 drop 指令弹栈
+;; 加上 and/or/xor/not 布尔运算，以及 lt 比较运算
+;; lt 是一个一元算符，如果栈顶大于 0 则将栈顶改为非零值（1），否则将栈顶赋为 0
 
 (define (run ins-vec [memory (make-vector 4096 (make-val 0))] [dump '()] [stack '()] [last-pc 0])
   (define/contract (push x)
@@ -65,54 +68,113 @@
           [`#(jmp ,line) (loop line)]
           [`#(jcond ,line)
 
-           (let ([flag (top)])
+           (let ([flag (get-val (top))])
              (pop)
-             (if (zero? (get-val flag))
+             (if (zero? flag)
                  (loop (add1 pc))
                  (loop line)))]
 
           [`#(add)
-           (let ([a (top)])
+           (let ([a (get-val (top))])
              (pop)
-             (let ([b (top)])
+             (let ([b (get-val (top))])
                (pop)
-               (push (make-val (+ (get-val a) (get-val b))))))
+               (push (make-val (+ a b)))))
 
            (loop (add1 pc))]
 
           [`#(sub)
-           (let ([a (top)])
+           (let ([a (get-val (top))])
              (pop)
-             (let ([b (top)])
+             (let ([b (get-val (top))])
                (pop)
-               (push (make-val (- (get-val b) (get-val a))))))
+               (push (make-val (- b a)))))
 
            (loop (add1 pc))]
 
           [`#(mul)
-           (let ([a (top)])
+           (let ([a (get-val (top))])
              (pop)
-             (let ([b (top)])
+             (let ([b (get-val (top))])
                (pop)
-               (push (make-val (* (get-val a) (get-val b))))))
+               (push (make-val (* a b)))))
 
            (loop (add1 pc))]
 
           [`#(div)
-           (let ([a (top)])
+           (let ([a (get-val (top))])
              (pop)
-             (let ([b (top)])
+             (let ([b (get-val (top))])
                (pop)
-               (push (make-val (quotient (get-val b) (get-val a))))))
+               (push (make-val (quotient b a)))))
 
            (loop (add1 pc))]
 
           [`#(mod)
-           (let ([a (top)])
+           (let ([a (get-val (top))])
              (pop)
-             (let ([b (top)])
+             (let ([b (get-val (top))])
                (pop)
-               (push (make-val (remainder (get-val b) (get-val a))))))
+               (push (make-val (remainder b a)))))
+
+           (loop (add1 pc))]
+
+          [`#(lt)
+
+           (let ([v (get-val (top))])
+             (pop)
+             (if (< 0 v)
+                 (push (make-val 1))
+                 (push (make-val 0))))
+
+           (loop (add1 pc))]
+
+          [`#(and)
+           (let ([a (get-val (top))])
+             (pop)
+             (let ([b (get-val (top))])
+               (pop)
+               (push
+                (make-val
+                 (if (or (zero? a) (zero? b))
+                     0
+                     1)))))
+
+           (loop (add1 pc))]
+
+          [`#(or)
+           (let ([a (get-val (top))])
+             (pop)
+             (let ([b (get-val (top))])
+               (pop)
+               (push
+                (make-val
+                 (if (and (zero? a) (zero? b))
+                     0
+                     1)))))
+
+           (loop (add1 pc))]
+
+          [`#(xor)
+           (let ([a (get-val (top))])
+             (pop)
+             (let ([b (get-val (top))])
+               (pop)
+               (push
+                (make-val
+                 (if (xor (zero? a) (zero? b))
+                     1
+                     0)))))
+
+           (loop (add1 pc))]
+
+          [`#(not)
+
+           (let ([v (get-val (top))])
+             (pop)
+             (if (zero? v)
+                 (push (make-val 1))
+                 (push (make-val 0))))
 
            (loop (add1 pc))]
 
@@ -131,4 +193,59 @@
      #(call 1)
      #(print)))
 
-(run a1)
+;; not 5 (非零) -> 0
+(define test-not-1
+  '#(#(imm 5)
+     #(not)
+     #(print))) ; 应该打印 0
+
+;; not 0 -> 1
+(define test-not-2
+  '#(#(imm 0)
+     #(not)
+     #(print))) ; 应该打印 1
+
+;; 3 < 5 -> 1 (true)
+(define test-lt-1
+  '#(#(imm 3)
+     #(imm 5)
+     #(lt)
+     #(print))) ; 应该打印 1
+
+;; 5 < 3 -> 0 (false)
+(define test-lt-2
+  '#(#(imm -1)
+     #(lt)
+     #(print))) ; 应该打印 0
+
+;; 1 and 1 (true and true) -> 1
+(define test-and
+  '#(#(imm 1)
+     #(imm 1)
+     #(and)
+     #(print) ; -> 1
+     #(imm 1)
+     #(imm 0)
+     #(and)
+     #(print) ; -> 0
+     #(imm 0)
+     #(imm 0)
+     #(and)
+     #(print))) ; -> 0
+
+;; (修正版) 读入一个数 x，如果 x > 10 则打印 100，否则打印 200
+(define test-if-else-fixed
+  '#(#(read)       ; 0: 读入 x
+     #(imm 10)     ; 1: 压入 10
+     #(sub)        ; 2: 相减
+     #(lt)         ; 3: 比较 x 和 10。如果 x>10, 栈顶为1, 否则为0
+     #(jcond 7)     ; 3: 如果栈顶非零 (x > 10)，跳转到 "then" 分支
+     ;; "else" 分支 (如果栈顶是 0)
+     #(imm 200)    ; 4: 压入 200
+     #(jmp 8)       ; 5: 跳转到结尾
+     ;; "then" 分支
+     #(imm 100)    ; 6: 压入 100
+     ;; 结尾
+     #(print)))    ; 7: 打印栈顶的值
+
+;; (run a1)
