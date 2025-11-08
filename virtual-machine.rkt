@@ -296,3 +296,7 @@
      #(label end)))
 
 ;; (run a1)
+
+(provide run)
+(provide make-val)
+(provide get-val)
