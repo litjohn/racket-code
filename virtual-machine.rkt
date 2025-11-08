@@ -32,6 +32,8 @@
 ;; 用 drop 指令弹栈
 ;; 加上 and/or/xor/not 布尔运算，以及 lt 比较运算
 ;; lt 是一个一元算符，如果栈顶大于 0 则将栈顶改为非零值（1），否则将栈顶赋为 0
+;; 行号跳转还是太痛苦了。加一个 label 系统
+;; `#(label ,sym)
 
 (define (run ins-vec [memory (make-vector 4096 (make-val 0))] [dump '()] [stack '()] [last-pc 0])
   (define/contract (push x)
@@ -54,19 +56,45 @@
       (add1 old-pc)))
 
   (define end (vector-length ins-vec))
+  (define labels (make-hash))
+
+  (let loop ([i 0])
+    (when (< i end)
+      (match (vector-ref ins-vec i)
+        [`#(label ,sym)
+         (hash-set! labels sym i)]
+        [else (void)])
+
+      (loop (add1 i))))
 
   (let loop ([pc last-pc])
     (when (< pc end)
       (let ([ins (vector-ref ins-vec pc)])
         (match ins
+          [`#(label ,sym) (loop (add1 pc))]
           [`#(store ,pos) (vector-set! memory pos (top)) (loop (add1 pc))]
           [`#(load ,pos) (push (vector-ref memory pos)) (loop (add1 pc))]
           [`#(imm ,val) (push (make-val val)) (loop (add1 pc))]
           [`#(drop) (pop) (loop (add1 pc))]
-          [`#(call ,line) (call pc) (loop line)]
+          [`#(call ,line)
+           (call pc)
+
+           (when (symbol? line)
+             (set! line (hash-ref labels line)))
+
+           (loop line)]
+
           [`#(ret) (loop (return))]
-          [`#(jmp ,line) (loop line)]
+
+          [`#(jmp ,line)
+           (when (symbol? line)
+             (set! line (hash-ref labels line)))
+
+           (loop line)]
+
           [`#(jcond ,line)
+           (when (symbol? line)
+             (set! line (hash-ref labels line)))
 
            (let ([flag (get-val (top))])
              (pop)
@@ -209,6 +237,7 @@
 (define test-lt-1
   '#(#(imm 3)
      #(imm 5)
+     #(sub)
      #(lt)
      #(print))) ; 应该打印 1
 
@@ -247,5 +276,23 @@
      #(imm 100)    ; 6: 压入 100
      ;; 结尾
      #(print)))    ; 7: 打印栈顶的值
+
+(define test-while
+  '#(#(read)
+     #(label while)
+     #(store 0)
+     #(drop)
+     #(imm 5)
+     #(load 0)
+     #(sub)
+     #(lt)
+     #(not)
+     #(jcond end)
+     #(imm 1)
+     #(print)
+     #(load 0)
+     #(add)
+     #(jmp while)
+     #(label end)))
 
 ;; (run a1)
