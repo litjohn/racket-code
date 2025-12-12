@@ -2,12 +2,17 @@
 
 (define-syntax pmatch-if
   (lambda (stx)
-    (syntax-case stx (quote any/p)
+    (syntax-case stx (quote any/p ?)
       [(_ val any/p t f) #'t]
       [(_ val x t f)
        (identifier? #'x)
        #'(let ([x val])
            t)]
+
+      [(_ val (? predicate pat) t f)
+       #'(if (predicate val)
+             (pmatch-if val pat t f)
+             f)]
 
       [(_ val (quote x) t f)
        #'(if (equal? val 'x)
