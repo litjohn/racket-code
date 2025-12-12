@@ -32,10 +32,9 @@
   (syntax-rules ()
     [(_ v) (error "pmatch: match failed:" v)]
     [(_ v [pat body ...] rest ...)
-     (let ([tmp v])
-       (pmatch-if
-        tmp pat (begin body ...)
-        (pmatch tmp rest ...)))]))
+     (let* ([tmp v]
+            [failure (lambda () (pmatch tmp rest ...))])
+       (pmatch-if tmp pat (begin body ...) (failure)))]))
 
 ;; ==========================================
 ;; 单元测试集
