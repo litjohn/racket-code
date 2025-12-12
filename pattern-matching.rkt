@@ -28,13 +28,17 @@
 
              f)])))
 
-(define-syntax pmatch
+(define-syntax pmatch-inner
   (syntax-rules ()
     [(_ v) (error "pmatch: match failed:" v)]
     [(_ v [pat body ...] rest ...)
      (let* ([tmp v]
-            [failure (lambda () (pmatch tmp rest ...))])
+            [failure (lambda () (pmatch-inner tmp rest ...))])
        (pmatch-if tmp pat (begin body ...) (failure)))]))
+
+(define-syntax-rule (pmatch v clauses ...)
+  (let ([tmp v])
+    (pmatch-inner tmp clauses ...)))
 
 ;; ==========================================
 ;; 单元测试集
