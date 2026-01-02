@@ -1,185 +1,103 @@
 #lang racket
 
-(require 2htdp/universe)
-(require 2htdp/image)
+;; 1. 定义变量
+;; 我们用 vector 来表示逻辑变量，方便和普通的 symbol 区分
+(define (var c) (vector c))
+(define (var? x) (vector? x))
+(define (var=? x1 x2) (eq? x1 x2))
 
-;; ==========================================
-;; 1. 常量定义 (CONSTANTS)
-;; ==========================================
+;; 2. 替换表 (Substitution)
+;; 本质是一个关联列表 (Association List): '((var1 . val1) (var2 . val2))
+(define empty-s '())
 
-(define WIDTH 800)
-(define HEIGHT 300)
-(define GROUND-Y 250) ;; 地面 Y 坐标
+;; extend-s: 扩展替换表，把 x 绑定到 v
+(define (ext-s x v s)
+  (cons `(,x . ,v) s))
 
-;; 恐龙属性
-(define DINO-WIDTH 40)
-(define DINO-HEIGHT 50)
-(define DINO-COLOR "dimgray")
-(define DINO-X 100)
+;; 3. Walk (寻值)
+;; 这是核心。在一个替换表中查找变量的最终值。
+;; 如果 x 绑定了 y，y 绑定了 5，那么 (walk x s) 应该得到 5。
+(define (walk u s)
+  (let ((pr (and (var? u) (assq u s))))
+    (if pr
+        (walk (cdr pr) s) ;; 继续递归查找
+        u)))              ;; 找不到或者不是变量，就返回自己
 
-;; 仙人掌属性
-(define CACTUS-WIDTH 25)
-(define CACTUS-HEIGHT 40)
-(define CACTUS-COLOR "forestgreen")
-
-;; 碰撞箱内缩 (Hitbox Padding)
-;; 这个值越大，游戏判定越宽容（不容易死）
-(define HITBOX-PADDING 8)
-
-;; 物理属性
-(define GRAVITY 1.5)
-(define JUMP-FORCE -18)
-(define SCROLL-SPEED 8)
-
-;; 图像素材 (稍微美化一点点，不像 Minecraft 那么方了)
-(define DINO-IMG
-  (above (circle (/ DINO-WIDTH 2) "solid" DINO-COLOR)
-         (rectangle DINO-WIDTH (- DINO-HEIGHT (/ DINO-WIDTH 2)) "solid" DINO-COLOR)))
-
-(define CACTUS-IMG
-  (overlay/align "center" "bottom"
-                 (rectangle 10 CACTUS-HEIGHT "solid" CACTUS-COLOR) ;; 主干
-                 (circle (/ CACTUS-WIDTH 2) "solid" CACTUS-COLOR))) ;; 稍微圆润一点
-
-(define GROUND-IMG (rectangle WIDTH 2 "solid" "black"))
-(define BACKGROUND (empty-scene WIDTH HEIGHT))
-
-;; ==========================================
-;; 2. 数据结构 (DATA DEFINITIONS)
-;; ==========================================
-
-;; dino-y 代表恐龙 **脚底** 的 Y 坐标
-(struct world (dino-y dino-vy cacti score game-over?) #:transparent)
-
-(define INITIAL-STATE
-  (world GROUND-Y 0 '() 0 #f))
-
-;; ==========================================
-;; 3. 游戏逻辑 (GAME LOGIC)
-;; ==========================================
-
-(define (update-dino w)
-  (define y (world-dino-y w))
-  (define vy (world-dino-vy w))
-
-  (if (>= (+ y vy) GROUND-Y)
-      (struct-copy world w [dino-y GROUND-Y] [dino-vy 0])
-      (struct-copy world w [dino-y (+ y vy)] [dino-vy (+ vy GRAVITY)])))
-
-(define (update-cacti w)
-  (define current-cacti (world-cacti w))
-  (define moved-cacti (map (lambda (x) (- x SCROLL-SPEED)) current-cacti))
-  (define visible-cacti (filter (lambda (x) (> x -50)) moved-cacti))
-
-  (define final-cacti
+;; 4. Unify (合一)
+;; 尝试让 u 和 v 相等，返回新的替换表；如果无法合一，返回 #f
+(define (unify u v s)
+  (let ((u (walk u s))   ;; 先把 u, v 解析到最底层的值
+        (v (walk v s)))
     (cond
-      [(empty? visible-cacti) (list (+ WIDTH (random 100 300)))]
-      [(< (last visible-cacti) (- WIDTH (random 200 600)))
-       (append visible-cacti (list (+ WIDTH 50)))]
-      [else visible-cacti]))
+      ((eqv? u v) s)     ;; 已经相等，无需操作，返回原表
+      ((var? u) (ext-s u v s)) ;; u 是变量，把 u->v 加入表
+      ((var? v) (ext-s v u s)) ;; v 是变量，把 v->u 加入表
+      ((and (pair? u) (pair? v)) ;; 都是 pair，递归合一 car 和 cdr
+       (let ((s (unify (car u) (car v) s)))
+         (and s (unify (cdr u) (cdr v) s))))
+      (else #f))))       ;; 无法合一（比如 5 和 6），失败
 
-  (struct-copy world w [cacti final-cacti]))
+;; 5. 基础 Goal 构造器
 
-;; [修正重点] 碰撞检测逻辑重写
-(define (check-collision w)
-  (define dy (world-dino-y w)) ;; 这是恐龙脚底的坐标
+;; == 关系：让 u 和 v 相等
+(define (== u v)
+  (lambda (s)
+    (let ((s (unify u v s)))
+      (if s `(,s) '())))) ;; 成功返回包含 s 的列表，失败返回空表
 
-  ;; 恐龙的物理判定箱 (Hitbox)
-  ;; 我们让判定箱比图片小一圈 (PADDING)，增加容错率
-  (define dino-left   (+ (- DINO-X (/ DINO-WIDTH 2)) HITBOX-PADDING))
-  (define dino-right  (- (+ DINO-X (/ DINO-WIDTH 2)) HITBOX-PADDING))
-  (define dino-bottom (- dy HITBOX-PADDING)) ;; 脚底往上缩一点，避免擦地误判
-  ;; 注意：这里不需要计算 dino-top，因为主要是检查有没有踩到仙人掌顶部
+;; 成功与失败
+(define succeed (lambda (s) `(,s)))
+(define fail    (lambda (s) '()))
 
-  ;; 检查所有仙人掌
-  (define hit?
-    (for/or ([cx (world-cacti w)])
-      ;; 仙人掌的物理判定箱
-      (define cactus-left   (+ (- cx (/ CACTUS-WIDTH 2)) HITBOX-PADDING))
-      (define cactus-right  (- (+ cx (/ CACTUS-WIDTH 2)) HITBOX-PADDING))
-      (define cactus-top    (+ (- GROUND-Y CACTUS-HEIGHT) HITBOX-PADDING))
+;; 6. 流的操作 (简易版 Monad)
 
-      ;; 判定重叠:
-      ;; 1. 恐龙左边 < 仙人掌右边
-      ;; 2. 恐龙右边 > 仙人掌左边
-      ;; 3. 恐龙脚底 > 仙人掌顶端 (说明高度不够，撞上了)
-      (and (< dino-left cactus-right)
-           (> dino-right cactus-left)
-           (> dino-bottom cactus-top))))
-
-  (if hit?
-      (struct-copy world w [game-over? #t])
-      w))
-
-(define (update-score w)
-  (struct-copy world w [score (+ 1 (world-score w))]))
-
-(define (tock w)
+;; mplus (Monad Plus): 合并两个流 (相当于逻辑 OR / disj)
+;; 这里的实现比较 naive，真正的 miniKanren 会在这里做 interleaving (交错)
+;; 以防止深度优先搜索陷入无限分支。
+(define (mplus $1 $2)
   (cond
-    [(world-game-over? w) w]
-    [else
-     (let* ([w1 (update-dino w)]
-            [w2 (update-cacti w1)]
-            [w3 (check-collision w2)])
-       (if (world-game-over? w3)
-           w3
-           (update-score w3)))]))
+    ((null? $1) $2)
+    ((procedure? $1) (lambda () (mplus $1 ($2)))) ;; 处理惰性流
+    (else (cons (car $1) (mplus (cdr $1) $2)))))
 
-;; ==========================================
-;; 4. 渲染 (RENDERING)
-;; ==========================================
-
-(define (draw-cactus x scene)
-  ;; 这里的坐标计算保持原样，确保视觉和物理对其
-  (place-image CACTUS-IMG x (- GROUND-Y (/ CACTUS-HEIGHT 2)) scene))
-
-(define (render w)
-  (define scene-with-ground
-    (place-image GROUND-IMG (/ WIDTH 2) (+ GROUND-Y 2) BACKGROUND))
-
-  (define scene-with-cacti
-    (foldl draw-cactus scene-with-ground (world-cacti w)))
-
-  ;; 修正渲染：dino-y 是脚底，place-image 的锚点是中心
-  ;; 所以中心点应该是 dino-y - (DINO-HEIGHT / 2)
-  (define scene-with-dino
-    (place-image DINO-IMG DINO-X (- (world-dino-y w) (/ DINO-HEIGHT 2)) scene-with-cacti))
-
-  ;; 调试模式：取消注释下面这行可以看到红色的实际碰撞点，用于验证手感
-  ;; (define scene-with-dino (place-image (circle 3 "solid" "red") DINO-X (- (world-dino-y w) HITBOX-PADDING) scene-with-dino))
-
-  (define score-text
-    (text (string-append "Score: " (number->string (world-score w))) 20 "black"))
-
-  (define final-scene
-    (place-image score-text (- WIDTH 80) 30 scene-with-dino))
-
-  (if (world-game-over? w)
-      (place-image (text "GAME OVER (Press Space)" 40 "red")
-                   (/ WIDTH 2) (/ HEIGHT 2)
-                   final-scene)
-      final-scene))
-
-;; ==========================================
-;; 5. 输入处理 (INPUT HANDLING)
-;; ==========================================
-
-(define (handle-key w key)
+;; bind (Monad Bind): 将目标 g 应用到流 $ 中的每个元素 (相当于逻辑 AND / conj)
+(define (bind $ g)
   (cond
-    [(and (world-game-over? w) (string=? key " "))
-     INITIAL-STATE]
-    [(or (string=? key " ") (string=? key "up"))
-     (if (>= (world-dino-y w) GROUND-Y)
-         (struct-copy world w [dino-vy JUMP-FORCE])
-         w)]
-    [else w]))
+    ((null? $) '())
+    ((procedure? $) (lambda () (bind ($) g)))     ;; 处理惰性流
+    (else (mplus (g (car $)) (bind (cdr $) g)))))
 
-;; ==========================================
-;; 6. 启动游戏
-;; ==========================================
+;; 7. 逻辑连接词
+(define (disj g1 g2) (lambda (s) (mplus (g1 s) (g2 s))))
+(define (conj g1 g2) (lambda (s) (bind (g1 s) g2)))
 
-(big-bang INITIAL-STATE
-  (on-tick tock)
-  (to-draw render)
-  (on-key handle-key)
-  (name "Racket Dino Run"))
+;; 8. 引入新变量 (call/fresh)
+;; f 是一个函数，接受一个新变量，返回一个 Goal
+(define (call/fresh f)
+  (lambda (s)
+    (let ((c (length s))) ;; 用当前 s 的长度作为新变量的名字(ID)，简单粗暴
+      ((f (var c)) s))))
+
+;; 9. 运行接口 (Run)
+;; q 是查询变量
+(define (run goal)
+  (let ((q (var 'q)))
+    ;; 我们把 q 包装进 goal，最后只把 q 的值 walk 出来
+    (map (lambda (s) (reify-name (walk* q s)))
+         ((call/fresh (lambda (x) (conj (== x q) (goal x)))) empty-s))))
+
+;; 辅助函数：递归彻底 walk (把结构里所有的变量都换成值)
+(define (walk* v s)
+  (let ((v (walk v s)))
+    (if (pair? v)
+        (cons (walk* (car v) s)
+              (walk* (cdr v) s))
+        v)))
+
+;; 辅助函数：把剩下的丑陋变量 #(0) #(1) 换成好看的 symbols _.0 _.1
+(define (reify-name v)
+  (if (var? v)
+      (string->symbol (format "_.~a" (vector-ref v 0)))
+      (if (pair? v)
+          (cons (reify-name (car v)) (reify-name (cdr v)))
+          v)))
