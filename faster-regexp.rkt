@@ -153,3 +153,66 @@
 ;; (test-performance 5000)
 ;; (test-performance 10000)
 ;; (test-performance 50000)
+
+;; ---------------------------------------------------------
+;; 测试套件
+;; ---------------------------------------------------------
+
+(define (matches? re str)
+  (let loop ([cur re] [s (string->list str)])
+    (cond
+      [(null? s) (nullable? cur)]
+      [else
+       (let ([next (derive cur (car s))])
+         (if (Void? next)
+             #f
+             (loop next (cdr s))))])))
+
+(define (test-all)
+  (define a (make-chr #\a))
+  (define b (make-chr #\b))
+  (define c (make-chr #\c))
+
+  (printf "Starting Correctness Tests...\n")
+
+  ;; 1. 基础匹配
+  (displayln (assert "Basic match" (matches? a "a") #t))
+  (displayln (assert "Basic mismatch" (matches? a "b") #f))
+
+  ;; 2. Alt 逻辑 (测试 nullable? 修正)
+  (define a-or-b (make-alt (list a b)))
+  (displayln (assert "Alt match 1" (matches? a-or-b "a") #t))
+  (displayln (assert "Alt match 2" (matches? a-or-b "b") #t))
+  (displayln (assert "Alt nullable" (nullable? (make-alt (list phi eps))) #t))
+
+  ;; 3. ACI 规范化 (由于 Hash-Consing，eq? 必须成立)
+  (define re1 (make-alt (list a b)))
+  (define re2 (make-alt (list b a)))
+  (displayln (assert "ACI Commutativity (re1 eq? re2)" (eq? re1 re2) #t))
+
+  (define re3 (make-alt (list a a a)))
+  (displayln (assert "ACI Idempotence (re3 eq? a)" (eq? re3 a) #t))
+
+  (define re4 (make-alt (list a (make-alt (list b c)))))
+  (define re5 (make-alt (list (make-alt (list a b)) c)))
+  (displayln (assert "ACI Associativity (re4 eq? re5)" (eq? re4 re5) #t))
+
+  ;; 4. Cat 与 Star
+  (define complex (make-cat (make-star (make-alt (list a b))) c))
+  (displayln (assert "Star/Cat match 1" (matches? complex "c") #t))
+  (displayln (assert "Star/Cat match 2" (matches? complex "ababc") #t))
+  (displayln (assert "Star/Cat match 3" (matches? complex "aba") #f))
+
+  ;; 5. Nullable 深度测试
+  ;; (a|ε)(b|ε) 应该是 nullable
+  (define n1 (make-cat (make-alt (list a eps)) (make-alt (list b eps))))
+  (displayln (assert "Nested nullable" (nullable? n1) #t))
+
+  (displayln "All tests completed."))
+
+(define (assert msg actual expected)
+  (if (equal? actual expected)
+      (format " [PASS] ~a" msg)
+      (error (format " [FAIL] ~a: expected ~a, got ~a" msg expected actual))))
+
+(test-all)
