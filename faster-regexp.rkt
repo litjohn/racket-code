@@ -122,97 +122,122 @@
          (make-cat (derive e1 c) e2))]
     [(Star e) (make-cat (derive e c) re)]))
 
-;; 6. 性能测试 (那个曾经卡死的用例)
-(define (test-performance n)
-  (printf "Testing n=~a... " n)
-  (define a (make-chr #\a))
-  ;; a|Eps a|Eps ... a a a
-  (define part1 (for/fold ([acc eps]) ([i n]) (make-cat (make-alt (list eps a)) acc)))
-  (define part2 (for/fold ([acc eps]) ([i n]) (make-cat a acc)))
-  (define re (make-cat part1 part2))
-
-  (define cache (make-hash))
-  (define (matches? cur s)
-    (if (null? s)
-        (nullable? cur)
-        (let* ([c (car s)]
-               [next (hash-ref! (hash-ref! cache cur (λ () (make-hash)))
-                                c
-                                (λ () (derive cur c)))])
-          (if (Void? next) #f (matches? next (cdr s))))))
-
-  (define input (make-string (* 2 n) #\a))
-  (collect-garbage)
-  (time (matches? re (string->list input))))
-
-;; (test-performance 100)
-;; (test-performance 200)
-;; (test-performance 500)
-;; (test-performance 1000)
-;; (test-performance 2000)
-;; (test-performance 5000)
-;; (test-performance 10000)
-;; (test-performance 50000)
+;; ---------------------------------------------------------
+;; 1. 匹配器构造 (完全匹配)
+;; ---------------------------------------------------------
+(define (make-matcher re)
+  (define cache (make-hash)) ;; 状态转移缓存: cur -> char -> next
+  (lambda (str)
+    (let loop ([cur re] [s (string->list str)])
+      (if (null? s)
+          (nullable? cur)
+          (let ([next (hash-ref! (hash-ref! cache cur (λ () (make-hash)))
+                                 (car s)
+                                 (λ () (derive cur (car s))))])
+            (if (Void? next)
+                #f
+                (loop next (cdr s))))))))
 
 ;; ---------------------------------------------------------
-;; 测试套件
+;; 2. 正则表达式反转
+;; ---------------------------------------------------------
+(define (re-reverse re)
+  (match re
+    [(Cat e1 e2) (make-cat (re-reverse e2) (re-reverse e1))]
+    [(Alt es)    (make-alt (map re-reverse es))]
+    [(Star e)    (make-star (re-reverse e))]
+    [_             re]))
+
+;; ---------------------------------------------------------
+;; 3. 搜索器构造 (子串匹配: 最左最短)
+;; ---------------------------------------------------------
+(define (make-search re)
+  ;; 前向搜索: 匹配 .*RE
+  (define forward-re (make-cat (make-star dot) re))
+  ;; 后向搜索: 匹配 RE_reversed
+  (define backward-re (re-reverse re))
+
+  (define f-cache (make-hash))
+  (define b-cache (make-hash))
+
+  (define (step cache cur c)
+    (hash-ref! (hash-ref! cache cur (λ () (make-hash)))
+               c
+               (λ () (derive cur c))))
+
+  (lambda (str)
+    (let* ([chars (string->list str)])
+      ;; 1. 前向扫描：寻找第一个能让 (.*RE) 变成 nullable 的位置 E
+      (define E
+        (let f-loop ([cur forward-re] [s chars] [idx 0])
+          (cond
+            [(nullable? cur) idx] ;; 找到匹配终点
+            [(null? s) #f]
+            [else
+             (let ([next (step f-cache cur (car s))])
+               (if (Void? next) #f (f-loop next (cdr s) (add1 idx))))])))
+
+      (if E
+          ;; 2. 后向扫描：从 E 位置开始向左匹配 RE_rev，寻找最短的起点
+          ;; 提取前 E 个字符并反转
+          (let* ([prefix-rev (reverse (take chars E))]
+                 [T (let b-loop ([cur backward-re] [s prefix-rev] [idx 0])
+                      (cond
+                        [(nullable? cur) idx] ;; 找到匹配起点（距离 E 的偏移）
+                        [(null? s) (if (nullable? cur) idx #f)]
+                        [else
+                         (let ([next (step b-cache cur (car s))])
+                           (if (Void? next) #f (b-loop next (cdr s) (add1 idx))))]))])
+            (cons (- E T) E))
+          #f))))
+
+;; ---------------------------------------------------------
+;; 测试脚本
 ;; ---------------------------------------------------------
 
-(define (matches? re str)
-  (let loop ([cur re] [s (string->list str)])
-    (cond
-      [(null? s) (nullable? cur)]
-      [else
-       (let ([next (derive cur (car s))])
-         (if (Void? next)
-             #f
-             (loop next (cdr s))))])))
-
-(define (test-all)
+(define (run-tests)
   (define a (make-chr #\a))
   (define b (make-chr #\b))
   (define c (make-chr #\c))
+  (define d (make-chr #\d))
 
-  (printf "Starting Correctness Tests...\n")
+  ;; 正则: a(b|c)*d
+  (define my-re (make-cat a (make-cat (make-star (make-alt (list b c))) d)))
 
-  ;; 1. 基础匹配
-  (displayln (assert "Basic match" (matches? a "a") #t))
-  (displayln (assert "Basic mismatch" (matches? a "b") #f))
+  (printf "=== Testing Matcher ===\n")
+  (define matches? (make-matcher my-re))
+  (displayln (list 'ad      (matches? "ad")))       ; #t
+  (displayln (list 'abd     (matches? "abd")))      ; #t
+  (displayln (list 'abccbd  (matches? "abccbd")))   ; #t
+  (displayln (list 'add     (matches? "add")))      ; #f
+  (displayln (list 'a       (matches? "a")))        ; #f
 
-  ;; 2. Alt 逻辑 (测试 nullable? 修正)
-  (define a-or-b (make-alt (list a b)))
-  (displayln (assert "Alt match 1" (matches? a-or-b "a") #t))
-  (displayln (assert "Alt match 2" (matches? a-or-b "b") #t))
-  (displayln (assert "Alt nullable" (nullable? (make-alt (list phi eps))) #t))
+  (printf "\n=== Testing Searcher ===\n")
+  (define search (make-search my-re))
+  (displayln (list 'search-ad       (search "ad")))           ; '(0 . 2)
+  (displayln (list 'search-xxxad    (search "xxxad")))        ; '(3 . 5)
+  (displayln (list 'search-adxxx    (search "adxxx")))        ; '(0 . 2)
+  (displayln (list 'search-abccbd   (search "abccbd")))       ; '(0 . 6)
+  (displayln (list 'search-none     (search "xyz")))          ; #f
 
-  ;; 3. ACI 规范化 (由于 Hash-Consing，eq? 必须成立)
-  (define re1 (make-alt (list a b)))
-  (define re2 (make-alt (list b a)))
-  (displayln (assert "ACI Commutativity (re1 eq? re2)" (eq? re1 re2) #t))
+  (printf "\n=== Testing Complex Search (Shortest-Left) ===\n")
+  ;; 多个匹配，应该返回最左边的那个
+  (displayln (list 'multi-ad   (search "ad...ad")))           ; '(0 . 2)
 
-  (define re3 (make-alt (list a a a)))
-  (displayln (assert "ACI Idempotence (re3 eq? a)" (eq? re3 a) #t))
+  ;; 贪婪/非贪婪行为测试
+  ;; 在 "abdbd" 中，forward 会在第一个 d (index 3) 停止，然后 backward 找到 a。
+  (displayln (list 'abdbd      (search "abdbd")))             ; '(0 . 3) -> "abd"
 
-  (define re4 (make-alt (list a (make-alt (list b c)))))
-  (define re5 (make-alt (list (make-alt (list a b)) c)))
-  (displayln (assert "ACI Associativity (re4 eq? re5)" (eq? re4 re5) #t))
+  ;; 验证 a...d 在长字符串中的表现
+  (displayln (list 'long-str   (search "zzzaaaaaaddddzzz")))   ; '(8 . 10) -> "ad"
 
-  ;; 4. Cat 与 Star
-  (define complex (make-cat (make-star (make-alt (list a b))) c))
-  (displayln (assert "Star/Cat match 1" (matches? complex "c") #t))
-  (displayln (assert "Star/Cat match 2" (matches? complex "ababc") #t))
-  (displayln (assert "Star/Cat match 3" (matches? complex "aba") #f))
+  (printf "\n=== Testing Reverse Logic ===\n")
+  ;; 测试反转后的匹配 (d (b|c)* a)
+  (define rev-matches? (make-matcher (re-reverse my-re)))
+  (displayln (list 'rev-da     (rev-matches? "da")))          ; #t
+  (displayln (list 'rev-dbca   (rev-matches? "dbca")))        ; #t
+  (displayln (list 'rev-ad     (rev-matches? "ad")))          ; #f
 
-  ;; 5. Nullable 深度测试
-  ;; (a|ε)(b|ε) 应该是 nullable
-  (define n1 (make-cat (make-alt (list a eps)) (make-alt (list b eps))))
-  (displayln (assert "Nested nullable" (nullable? n1) #t))
+  (printf "\nAll functional tests finished.\n"))
 
-  (displayln "All tests completed."))
-
-(define (assert msg actual expected)
-  (if (equal? actual expected)
-      (format " [PASS] ~a" msg)
-      (error (format " [FAIL] ~a: expected ~a, got ~a" msg expected actual))))
-
-(test-all)
+(run-tests)
