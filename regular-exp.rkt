@@ -151,7 +151,7 @@
 
 (displayln "=== Edge Cases ===")
 ;; 多个匹配，应该返回最左边的那个
-(displayln (search "ad...ad"))    ;; '(0 . 2) 
+(displayln (search "ad...ad"))    ;; '(0 . 2)
 
 ;; 贪婪/非贪婪行为测试
 ;; 这里的实现是"最短匹配" (reluctant)，因为遇到 nullable 就立即返回了
@@ -162,7 +162,7 @@
 (displayln (search "abdbd"))      ;; '(0 . 3)
 
 ;; 复杂一点的
-(displayln (search "zzzaaaaaaddddzzz")) ;; '(3 . 5) -> 匹配了第一个 a..d 即 "ad"
+(displayln (search "zzzaaaaaaddddzzz")) ;; '(8 . 10) -> 匹配了第一个 a..d 即 "ad"
 ;; 解释：因为 forward 匹配 .*a(b|c)*d。
 ;; .* 吃了 "zzzaaaa"，然后 a 匹配 "a"，然后 d 匹配 "d"。
 ;; 这里其实取决于 .* 的结合性，但在导数语义下，一旦 nullable 就停，这通常意味着匹配了"能匹配的最短前缀"。
